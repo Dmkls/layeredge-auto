@@ -482,7 +482,8 @@ def sign_connect_twitter(account):
     signature = account.evm_account.sign_message(msg_hash)['signature'].hex()
     return signature, timestamp
     
-async def connect_twitter(account, proxy, auth_token: str):
+async def connect_twitter(account, proxy, twitter_data: tuple):
+    auth_token, username = twitter_data
     if not proxy.startswith("http://") and not proxy.startswith("https://"):
         proxy = "http://" + proxy
 
@@ -506,12 +507,13 @@ async def connect_twitter(account, proxy, auth_token: str):
     # Создаем сессию и клиента для работы с Twitter (здесь ssl-проверка отключена для тестирования)
     session = BaseAsyncSession(proxy=proxy, user_agent=account.ua)
     client = TwitterClient(auth_token, session, version=browser_version, platform=browser_platform)
+    client.username = username
 
     # Проверяем валидность твиттер-токена (login() должен быть модифицирован для ssl=False)
     login_success, login_message = await client.login()
     if not login_success:
         logger.error(f"{account.wallet_address} | Ошибка подключения Twitter: {login_message}")
-        write_failed_twitter(account.wallet_address, auth_token)
+        write_failed_twitter(account.wallet_address, account.private_key, auth_token)
         return False
     logger.success(f"{account.wallet_address} | Токен Twitter подтверждён: {login_message}")
 
@@ -538,12 +540,12 @@ async def connect_twitter(account, proxy, auth_token: str):
                 csrf_token = csrf_response.get("csrfToken")
                 if not csrf_token:
                     logger.error(f"{account.wallet_address} | Не удалось получить csrf token")
-                    write_failed_twitter(account.wallet_address, auth_token)
+                    write_failed_twitter(account.wallet_address, account.private_key, auth_token)
                     return False
             else:
                 error_text = await resp.text()
                 logger.error(f"{account.wallet_address} | Ошибка получения csrf token: {resp.status} - {error_text}")
-                write_failed_twitter(account.wallet_address, auth_token)
+                write_failed_twitter(account.wallet_address, account.private_key, auth_token)
                 return False
 
         logger.debug(f"{account.wallet_address} | Получен csrf token: {csrf_token}")
@@ -576,12 +578,12 @@ async def connect_twitter(account, proxy, auth_token: str):
                 oauth_url = signin_json.get("url")
                 if not oauth_url:
                     logger.error(f"{account.wallet_address} | Не получена OAuth-ссылка: {signin_json}")
-                    write_failed_twitter(account.wallet_address, auth_token)
+                    write_failed_twitter(account.wallet_address, account.private_key, auth_token)
                     return False
             else:
                 error_text = await signin_resp.text()
                 logger.error(f"{account.wallet_address} | Ошибка signin Twitter: {error_text}")
-                write_failed_twitter(account.wallet_address, auth_token)
+                write_failed_twitter(account.wallet_address, account.private_key, auth_token)
                 return False
 
     logger.debug(f"{account.wallet_address} | Получена OAuth-ссылка: {oauth_url}")
@@ -594,14 +596,14 @@ async def connect_twitter(account, proxy, auth_token: str):
     oauth_start_success, auth_code_or_msg = await client.start_oauth2(oauth_url, params)
     if not oauth_start_success:
         logger.error(f"{account.wallet_address} | Ошибка start_oauth2: {auth_code_or_msg}")
-        write_failed_twitter(account.wallet_address, auth_token)
+        write_failed_twitter(account.wallet_address, account.private_key, auth_token)
         return False
     logger.debug(f"{account.wallet_address} | start_oauth2 выполнен, auth_code: {auth_code_or_msg}")
 
     oauth_confirm_success, redirect_uri_or_msg = await client.confirm_oauth2(oauth_url, auth_code_or_msg)
     if not oauth_confirm_success:
         logger.error(f"{account.wallet_address} | Ошибка confirm_oauth2: {redirect_uri_or_msg}")
-        write_failed_twitter(account.wallet_address, auth_token)
+        write_failed_twitter(account.wallet_address, account.private_key, auth_token)
         return False
     logger.success(f"{account.wallet_address} | Привязка Twitter выполнена успешно, начинаю верификацию")
     logger.debug(f"{account.wallet_address} | Привязка Twitter выполнена успешно, redirect: {redirect_uri_or_msg}")
@@ -611,7 +613,7 @@ async def connect_twitter(account, proxy, auth_token: str):
         logger.debug(f"{account.wallet_address} | Получен twitterId: {twitter_id}")
     except Exception as e:
         logger.error(f"{account.wallet_address} | Ошибка получения twitterId: {e}")
-        write_failed_twitter(account.wallet_address, auth_token)
+        write_failed_twitter(account.wallet_address, account.private_key, auth_token)
         return False
 
     sign, timestamp = sign_connect_twitter(account)
@@ -650,11 +652,11 @@ async def connect_twitter(account, proxy, auth_token: str):
         connect_json = connect_resp.json()
         logger.success(f"{account.wallet_address} | Привязка Twitter зафиксирована")
         logger.debug(f"{account.wallet_address} | Привязка Twitter зафиксирована: {connect_json}")
-        write_success_twitter(account.wallet_address, auth_token)
+        write_success_twitter(account.wallet_address, account.private_key, auth_token)
     else:
         error_text = connect_resp.text
         logger.error(f"{account.wallet_address} | Ошибка фиксации привязки Twitter: {connect_resp.status_code} - {error_text}")
-        write_failed_twitter(account.wallet_address, auth_token)
+        write_failed_twitter(account.wallet_address, account.private_key, auth_token)
         return False
 
     return True
