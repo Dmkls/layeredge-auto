@@ -32,8 +32,19 @@ def read_wallets_to_complete_tasks() -> list[str]:
 def read_wallets_to_mint_nft() -> list[str]:
     return read_file(WALLETS_TO_MINT_NFT)
 
-def read_twitter_tokens() -> list[str]:
-    return read_file(TWITTER_TOKENS_PATH)
+def read_twitter_tokens() -> list[tuple[str, str]]:
+    lines = read_file(TWITTER_TOKENS_PATH)
+    tokens = []
+    for line in lines:
+        parts = line.split(',')
+        if len(parts) == 2:
+            token = parts[0].strip()
+            username = parts[1].strip()
+            tokens.append((token, username))
+        else:
+            # Если формат строки неверный, можно записать ошибку или вернуть пустой username
+            tokens.append((line.strip(), ""))
+    return tokens
 
 def read_proofs() -> list[str]:
     return read_file(PROOFS_PATH)
@@ -66,10 +77,10 @@ def write_failed_mint(private_key: str):
     with open(FAILED_MINT_PATH, 'a', encoding="utf-8") as f:
         f.write(f'{private_key}\n')
 
-def write_success_twitter(private_key:str, auth_token: str):
+def write_success_twitter(address: str, private_key: str, auth_token: str):
     with open(SUCCESS_TWITTER_PATH, 'a', encoding="utf-8") as f:
-        f.write(f'{private_key},{auth_token}\n')
+        f.write(f'{address},{private_key},{auth_token}\n')
 
-def write_failed_twitter(private_key:str, auth_token: str):
+def write_failed_twitter(address: str, private_key: str, auth_token: str):
     with open(FAILED_TWITTER_PATH, 'a', encoding="utf-8") as f:
-        f.write(f'{private_key},{auth_token}\n')
+        f.write(f'{address},{private_key},{auth_token}\n')
