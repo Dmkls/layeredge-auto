@@ -17,12 +17,12 @@ if sys.platform.startswith("win"):
 
 PRIVATE_KEYS_TO_COMPLETE_TASKS = read_wallets_to_complete_tasks()
 PROXIES = read_proxies()
-TWITTER_TOKENS = read_twitter_tokens()
+TWITTER_DATA = read_twitter_tokens()
 ua_faker = UserAgent()
 write_failed_tasks('------------------------------------------------')
 write_success_tasks('------------------------------------------------')
 
-async def complete_tasks(private_key: str, proxy, twitter_tokens):
+async def complete_tasks(private_key: str, proxy, twitter_data: tuple):
     ua = await db.get_ua(private_key_to_wallet(private_key))
 
     if not ua:
@@ -49,14 +49,14 @@ async def complete_tasks(private_key: str, proxy, twitter_tokens):
         await submit_og_pass(account, proxy)
         await asyncio.sleep(10, 30)
     if config.DO_TWITTER_CONNECT:
-        await connect_twitter(account, proxy, twitter_tokens)
+        await connect_twitter(account, proxy, twitter_data)
         await asyncio.sleep(10, 30)
 
 async def start():
     await db.create_database()
     tasks = []
-    for private_key, proxy, twitter_tokens in zip(PRIVATE_KEYS_TO_COMPLETE_TASKS, PROXIES, TWITTER_TOKENS):
-        task = asyncio.create_task(complete_tasks(private_key, proxy, twitter_tokens))
+    for private_key, proxy, twitter_data in zip(PRIVATE_KEYS_TO_COMPLETE_TASKS, PROXIES, TWITTER_DATA):
+        task = asyncio.create_task(complete_tasks(private_key, proxy, twitter_data))
         tasks.append(task)
         await asyncio.sleep(0.1)
 
