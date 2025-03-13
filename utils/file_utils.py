@@ -1,8 +1,8 @@
 import json
-from configs.constants import REGISTER_PATH, FARM_PATH, WALLETS_TO_REFS_PATH, PROXIES_PATH, REFS_PATH
+from configs.constants import REGISTER_PATH, FARM_PATH, WALLETS_TO_REFS_PATH, PROXIES_PATH, REFS_PATH, TWITTER_TOKENS_PATH
 from configs.constants import SUCCESS_TASKS_PATH, FAILED_TASKS_PATH, WALLETS_TO_COMPLETE_TASKS_PATH, PROOFS_PATH
 from configs.constants import WALLETS_TO_MINT_NFT, SUCCESS_MINT_PATH, FAILED_MINT_PATH
-from configs.constants import FAILED_PATH, SUCCESS_PATH, ACCS_REFS_PATH
+from configs.constants import FAILED_PATH, SUCCESS_PATH, ACCS_REFS_PATH, SUCCESS_TWITTER_PATH, FAILED_TWITTER_PATH
 
 def read_json(path: str, encoding: str | None = None) -> list | dict:
     return json.load(open(path, encoding=encoding))
@@ -31,6 +31,9 @@ def read_wallets_to_complete_tasks() -> list[str]:
 
 def read_wallets_to_mint_nft() -> list[str]:
     return read_file(WALLETS_TO_MINT_NFT)
+
+def read_twitter_tokens() -> list[str]:
+    return read_file(TWITTER_TOKENS_PATH)
 
 def read_proofs() -> list[str]:
     return read_file(PROOFS_PATH)
@@ -62,3 +65,11 @@ def write_success_mint(private_key: str):
 def write_failed_mint(private_key: str):
     with open(FAILED_MINT_PATH, 'a', encoding="utf-8") as f:
         f.write(f'{private_key}\n')
+
+def write_success_twitter(private_key:str, auth_token: str):
+    with open(SUCCESS_TWITTER_PATH, 'a', encoding="utf-8") as f:
+        f.write(f'{private_key},{auth_token}\n')
+
+def write_failed_twitter(private_key:str, auth_token: str):
+    with open(FAILED_TWITTER_PATH, 'a', encoding="utf-8") as f:
+        f.write(f'{private_key},{auth_token}\n')
