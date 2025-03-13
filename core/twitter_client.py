@@ -239,11 +239,54 @@ class TwitterClient:
                     return twitter_id
 
             logger.error("❌ Twitter ID не найден в ответе API")
-            return None  
+            if self.username:
+                return await self.get_twitter_id_fallback(self.username)
+            else:
+                logger.error("❌ Имя пользователя (username) не задано для fallback запроса")
+                return None  
 
         except Exception as e:
             logger.error(f"❌ Ошибка при запросе Twitter API: {str(e)}")
             return None  
+        
+
+    async def get_twitter_id_fallback(self, username: str):
+        """
+        Резервный запрос для получения twitterId (rest_id) через GraphQL-запрос,
+        если основной запрос не вернул twitterId.
+        """
+        url = (
+            "https://x.com/i/api/graphql/-0XdHI-mrHWBQd8-oLo1aA/ProfileSpotlightsQuery"
+            f"?variables=%7B%22screen_name%22%3A%22{username}%22%7D"
+        )
+
+        # Получаем базовые заголовки и обновляем их аналогично get_twitter_id
+        headers = self.base_headers()
+        headers.update({
+            "referer": f"https://x.com/{username}",
+            "x-csrf-token": self.ct0,
+            "Cookie": f"auth_token={self.auth_token}; ct0={self.ct0};"
+        })
+
+        logger.debug(f"Fallback запрос для username: {username}")
+        try:
+            response = await self.async_session.get(url, headers=headers)
+            logger.debug(f"Fallback query: статус {response.status_code}")
+
+            if response.status_code == 200:
+                data = response.json()
+                user_result = data.get("data", {}).get("user_result_by_screen_name", {}).get("result", {})
+                twitter_id = user_result.get("rest_id")
+                if twitter_id:
+                    logger.debug(f"✅ Fallback найден twitterId: {twitter_id}")
+                    return twitter_id
+            else:
+                logger.error(f"Fallback запрос вернул статус {response.status_code}")
+                return None
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка в fallback запросе: {str(e)}")
+            return None
 
 
     @staticmethod
