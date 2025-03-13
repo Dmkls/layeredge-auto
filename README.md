@@ -6,6 +6,7 @@ Free soft to farm project
 3. **MAKE A PROOF**
 4. **COMPLETE ALL TASKS**
 5. **MINT PLEDGE PASSES**
+6. **CONNECT TWITTER**
 
 ![photo_2025-02-16_21-21-21](https://github.com/user-attachments/assets/8e1be1e6-01e7-43a2-aec4-055cf8b704ce)
 
