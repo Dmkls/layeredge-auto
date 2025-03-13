@@ -1,5 +1,8 @@
+import os
+
 REGISTER_MODE = False
-FARM_MODE = True
+FARM_MODE = False
+TASKS_MODE = True
 
 # ┏━━━━━━━━━━━━━━━━━━━━━━━━┓
 # ┃     REFERRAL TIMING    ┃
@@ -30,9 +33,10 @@ SSL = True
 # ┗━━━━━━━━━━━━━━━━━━━━━━━━┛
 # Enable or disable tasks
 
-DO_PROOF = True                         # Send proof
-DO_SUBMIT_PROOF_TASK = True             # Complete the task with proof confirmation
-DO_LIGHT_NODE_RUN_TASK = True           # Complete the task with light node confirmation
+DO_PROOF = False                         # Send proof
+DO_TWITTER_CONNECT = True               # Complete the task with connect twitter       
+DO_SUBMIT_PROOF_TASK = False            # Complete the task with proof confirmation
+DO_LIGHT_NODE_RUN_TASK = False          # Complete the task with light node confirmation
 DO_PLEDGE_PASS_HOLD_TASK = False        # Complete the task with free pass
 DO_OG_PLEDGE_PASS_HOLD_TASK = False     # Complete the task with OG pass
 
@@ -41,7 +45,11 @@ DO_OG_PLEDGE_PASS_HOLD_TASK = False     # Complete the task with OG pass
 # ┗━━━━━━━━━━━━━━━━━━━━━━━━┛
 # Enable or disable tasks
 
-MINT_FREE_PASS = True                   # Mint free pledge pass. Need ETH to pay transaction fees
+MINT_FREE_PASS = False                   # Mint free pledge pass. Need ETH to pay transaction fees
 MINT_OG_PASS = False                    # Mint OG pledge pass for 0.0009 ETH
 MIN_DELAY_BETWEEN_ACCOUNTS = 100        # in seconds
 MAX_DELAY_BETWEEN_ACCOUNTS = 600        # in seconds
+
+LOG_LEVEL = "INFO"  # Можно поменять на INFO, WARNING, ERROR, DEBUG
+LOG_DIR = "logs"
+LOG_FILE = os.path.join(LOG_DIR, 'log.log')
