@@ -42,7 +42,6 @@ def read_twitter_tokens() -> list[tuple[str, str]]:
             username = parts[1].strip()
             tokens.append((token, username))
         else:
-            # Если формат строки неверный, можно записать ошибку или вернуть пустой username
             tokens.append((line.strip(), ""))
     return tokens
 
@@ -84,3 +83,17 @@ def write_success_twitter(address: str, private_key: str, auth_token: str):
 def write_failed_twitter(address: str, private_key: str, auth_token: str):
     with open(FAILED_TWITTER_PATH, 'a', encoding="utf-8") as f:
         f.write(f'{address},{private_key},{auth_token}\n')
+
+def remove_wallet_to_complete_task(private_key: str):
+    lines = read_file(WALLETS_TO_COMPLETE_TASKS_PATH)
+    with open(WALLETS_TO_COMPLETE_TASKS_PATH, 'w', encoding='utf-8') as f:
+        for line in lines:
+            if line.strip() != private_key:
+                f.write(line + "\n")
+
+def remove_twitter_token(token: str):
+    lines = read_file(TWITTER_TOKENS_PATH)
+    with open(TWITTER_TOKENS_PATH, 'w', encoding='utf-8') as f:
+        for line in lines:
+            if not line.startswith(token + ","):
+                f.write(line + "\n")
