@@ -1,16 +1,26 @@
 import asyncio
+from urllib.parse import quote, parse_qs, urlparse
 import time
-from random import random, choice
+from random import choice
 from datetime import datetime, timezone
+import re
+import json
 
 import aiohttp
 from aiohttp import ClientHttpProxyError, ClientResponseError
 from eth_account.messages import encode_defunct
+from core.twitter_client import BaseAsyncSession, TwitterClient
+from curl_cffi.requests.exceptions import SSLError, CurlError
 
 from core.account import Account
-from utils.file_utils import write_success_account, write_failed_account, write_success_tasks, write_failed_tasks
+from utils.file_utils import (
+    write_success_account, write_failed_account, write_success_tasks, 
+    write_failed_tasks, write_success_twitter, write_failed_twitter,
+    remove_twitter_token
+)
 from utils.file_utils import read_proxies, read_proofs
 from configs.config import SSL
+from configs import config
 from utils.log_utils import logger
 from fake_useragent import UserAgent
 from core import db
@@ -462,3 +472,233 @@ async def submit_og_pass(account: Account, proxy):
                 logger.error(f"{account.wallet_address} | Failed to complete task: verify OG pass holding")
                 write_failed_tasks(account.wallet_address)
         return False
+
+def sign_connect_twitter(account):
+    """
+    Формирует сообщение и генерирует подпись для запроса фиксации привязки Twitter.
+    Сообщение можно сформировать так:
+    
+      "I am verifying my Twitter authentication for {walletAddress} at {timestamp}"
+    
+    Возвращает подпись и timestamp.
+    """
+    timestamp = int(time.time() * 1000)
+    message = f"I am verifying my Twitter authentication for {account.wallet_address} at {timestamp}"
+    msg_hash = encode_defunct(text=message)
+    signature = account.evm_account.sign_message(msg_hash)['signature'].hex()
+    return signature, timestamp
+
+async def request_with_retry(session, method, url, retries=3, delay=5, **kwargs):
+    for attempt in range(1, retries + 1):
+        try:
+            if method.lower() == "post":
+                response = await session.post(url, **kwargs)
+            elif method.lower() == "get":
+                response = await session.get(url, **kwargs)
+            else:
+                raise ValueError("Unsupported method")
+            return response
+        except (SSLError, CurlError) as e:
+            logger.warning(f"Попытка {attempt}/{retries} для {url} не удалась из-за SSL ошибки: {e}")
+            if attempt < retries:
+                await asyncio.sleep(delay)
+            else:
+                logger.error(f"Все {retries} попыток для {url} завершились неудачей из-за SSL ошибок.")
+                raise e
+        except Exception as e:
+            logger.warning(f"Попытка {attempt}/{retries} для {url} не удалась: {e}")
+            if attempt < retries:
+                await asyncio.sleep(delay)
+            else:
+                logger.error(f"Все {retries} попыток для {url} завершились неудачей.")
+                raise e
+    
+async def connect_twitter(account, proxy, twitter_data: tuple):
+    auth_token, username = twitter_data
+    if not proxy.startswith("http://") and not proxy.startswith("https://"):
+        proxy = "http://" + proxy
+
+    logger.info(f"{account.wallet_address} | Начинаем подключение Twitter...")
+
+    def extract_browser_info(ua_str: str):
+        version_match = re.search(r"Chrome/(\d+)", ua_str)
+        version = version_match.group(1) if version_match else "133"
+        if "Windows" in ua_str:
+            platform = "Windows"
+        elif "Mac" in ua_str or "Macintosh" in ua_str:
+            platform = "Mac OS"
+        elif "Linux" in ua_str:
+            platform = "Linux"
+        else:
+            platform = "Unknown"
+        return version, platform
+
+    browser_version, browser_platform = extract_browser_info(account.ua)
+
+    session = BaseAsyncSession(proxy=proxy, user_agent=account.ua)
+    client = TwitterClient(auth_token, session, version=browser_version, platform=browser_platform)
+    client.username = username
+
+    login_success, login_message = await client.login()
+    if not login_success:
+        logger.error(f"{account.wallet_address} | Ошибка подключения Twitter: {login_message}")
+
+        if login_message == "Плохой твиттер токен!":
+            logger.warning(f"{account.wallet_address} | Удаляем плохой токен: {auth_token}")
+            remove_twitter_token(auth_token)
+            write_failed_twitter(auth_token)
+        
+        return False
+
+    logger.success(f"{account.wallet_address} | Токен Twitter подтверждён: {login_message}")
+
+    async with aiohttp.ClientSession() as sess:
+        csrf_headers = {
+            'accept': '*/*',
+            'accept-language': 'ru-RU,ru;q=0.6',
+            'content-type': 'application/json',
+            'priority': 'u=1, i',
+            'referer': 'https://dashboard.layeredge.io/tasks',
+            'sec-ch-ua': f'"Not(A:Brand";v="99", "Brave";v="{browser_version}", "Chromium";v="{browser_version}"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': f'"{browser_platform}"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-origin',
+            'sec-gpc': '1',
+            'user-agent': account.ua,
+        }
+        async with sess.get("https://dashboard.layeredge.io/api/auth/csrf", headers=csrf_headers, proxy=proxy, ssl=False) as resp:
+            if resp.status < 300:
+                csrf_response = await resp.json()
+                csrf_token = csrf_response.get("csrfToken")
+                if not csrf_token:
+                    logger.error(f"{account.wallet_address} | Не удалось получить csrf token")
+                    # write_failed_twitter(account.wallet_address, account.private_key, auth_token)
+                    return False
+            else:
+                error_text = await resp.text()
+                logger.error(f"{account.wallet_address} | Ошибка получения csrf token: {resp.status} - {error_text}")
+                # write_failed_twitter(account.wallet_address, account.private_key, auth_token)
+                return False
+
+        logger.debug(f"{account.wallet_address} | Получен csrf token: {csrf_token}")
+
+        callback_url = "https://dashboard.layeredge.io/tasks"
+        payload = f"callbackUrl={quote(callback_url)}&csrfToken={csrf_token}&json=true"
+        signin_headers = {
+            'accept': '*/*',
+            'accept-language': 'ru-RU,ru;q=0.6',
+            'content-type': 'application/x-www-form-urlencoded',
+            'origin': 'https://dashboard.layeredge.io',
+            'priority': 'u=1, i',
+            'referer': 'https://dashboard.layeredge.io/tasks',
+            'sec-ch-ua': f'"Not(A:Brand";v="99", "Brave";v="{browser_version}", "Chromium";v="{browser_version}"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': f'"{browser_platform}"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-origin',
+            'sec-gpc': '1',
+            'user-agent': account.ua,
+        }
+        async with sess.post("https://dashboard.layeredge.io/api/auth/signin/twitter",
+                             data=payload,
+                             headers=signin_headers,
+                             proxy=proxy) as signin_resp:
+            if signin_resp.status < 300:
+                signin_json = await signin_resp.json()
+                oauth_url = signin_json.get("url")
+                if not oauth_url:
+                    logger.error(f"{account.wallet_address} | Не получена OAuth-ссылка: {signin_json}")
+                    # write_failed_twitter(account.wallet_address, account.private_key, auth_token)
+                    return False
+            else:
+                error_text = await signin_resp.text()
+                logger.error(f"{account.wallet_address} | Ошибка signin Twitter: {error_text}")
+                # write_failed_twitter(account.wallet_address, account.private_key, auth_token)
+                return False
+
+    logger.debug(f"{account.wallet_address} | Получена OAuth-ссылка: {oauth_url}")
+
+    parsed = urlparse(oauth_url)
+    params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+
+    oauth_start_success, auth_code_or_msg = await client.start_oauth2(oauth_url, params)
+    if not oauth_start_success:
+        logger.error(f"{account.wallet_address} | Ошибка start_oauth2: {auth_code_or_msg}")
+        # write_failed_twitter(account.wallet_address, account.private_key, auth_token)
+        return False
+    logger.debug(f"{account.wallet_address} | start_oauth2 выполнен, auth_code: {auth_code_or_msg}")
+
+    oauth_confirm_success, redirect_uri_or_msg = await client.confirm_oauth2(oauth_url, auth_code_or_msg)
+    if not oauth_confirm_success:
+        logger.error(f"{account.wallet_address} | Ошибка confirm_oauth2: {redirect_uri_or_msg}")
+        # write_failed_twitter(account.wallet_address, account.private_key, auth_token)
+        return False
+    logger.success(f"{account.wallet_address} | Привязка Twitter выполнена успешно, начинаю верификацию")
+    logger.debug(f"{account.wallet_address} | Привязка Twitter выполнена успешно, redirect: {redirect_uri_or_msg}")
+
+    try:
+        twitter_id = await client.get_twitter_id(oauth_url)
+        logger.debug(f"{account.wallet_address} | Получен twitterId: {twitter_id}")
+    except Exception as e:
+        logger.error(f"{account.wallet_address} | Ошибка получения twitterId: {e}")
+        # write_failed_twitter(account.wallet_address, account.private_key, auth_token)
+        return False
+
+    sign, timestamp = sign_connect_twitter(account)
+    connect_payload = {
+        "walletAddress": account.wallet_address,
+        "sign": f"0x{sign}",
+        "timestamp": str(timestamp),
+        "twitterId": str(twitter_id)
+    }
+    connect_headers = {
+        'accept': 'application/json, text/plain, */*',
+        'accept-language': 'ru-RU,ru;q=0.6',
+        'content-type': 'application/json',
+        'origin': 'https://dashboard.layeredge.io',
+        'priority': 'u=1, i',
+        'referer': redirect_uri_or_msg,
+        'sec-ch-ua': f'"Not(A:Brand";v="99", "Brave";v="{browser_version}", "Chromium";v="{browser_version}"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': f'"{browser_platform}"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-site',
+        'sec-gpc': '1',
+        'user-agent': account.ua,
+    }
+
+    try:
+        connect_resp = await request_with_retry(
+            session,
+            "post",
+            "https://referralapi.layeredge.io/api/task/connect-twitter",
+            retries=config.MAX_RETRIES,
+            delay=config.RETRY_DELAY,
+            headers=connect_headers,
+            json=connect_payload,
+            proxy=proxy
+        )
+    except Exception as e:
+        logger.error(f"{account.wallet_address} | Ошибка запроса connect-twitter после нескольких попыток: {e}")
+        # write_failed_twitter(account.wallet_address, account.private_key, auth_token)
+        return False
+
+    logger.debug(f"Отправляемый payload: {json.dumps(connect_payload, indent=4, ensure_ascii=False)}")
+    logger.debug(connect_resp)
+    if connect_resp.status_code < 300:
+        connect_json = connect_resp.json()
+        logger.success(f"{account.wallet_address} | Привязка Twitter зафиксирована")
+        logger.debug(f"{account.wallet_address} | Привязка Twitter зафиксирована: {connect_json}")
+        write_success_twitter(account.wallet_address, account.private_key, auth_token)
+    else:
+        error_text = connect_resp.text
+        logger.error(f"{account.wallet_address} | Ошибка фиксации привязки Twitter: {connect_resp.status_code} - {error_text}")
+        # write_failed_twitter(account.wallet_address, account.private_key, auth_token)
+        return False
+
+    return True
+
