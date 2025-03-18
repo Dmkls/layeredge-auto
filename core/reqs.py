@@ -1,7 +1,7 @@
 import asyncio
 from urllib.parse import quote, parse_qs, urlparse
 import time
-from random import random, choice
+from random import choice
 from datetime import datetime, timezone
 import re
 import json
@@ -10,9 +10,14 @@ import aiohttp
 from aiohttp import ClientHttpProxyError, ClientResponseError
 from eth_account.messages import encode_defunct
 from core.twitter_client import BaseAsyncSession, TwitterClient
+from curl_cffi.requests.exceptions import SSLError, CurlError
 
 from core.account import Account
-from utils.file_utils import write_success_account, write_failed_account, write_success_tasks, write_failed_tasks, write_success_twitter, write_failed_twitter
+from utils.file_utils import (
+    write_success_account, write_failed_account, write_success_tasks, 
+    write_failed_tasks, write_success_twitter, write_failed_twitter,
+    remove_twitter_token
+)
 from utils.file_utils import read_proxies, read_proofs
 from configs.config import SSL
 from configs import config
@@ -484,10 +489,6 @@ def sign_connect_twitter(account):
     return signature, timestamp
 
 async def request_with_retry(session, method, url, retries=3, delay=5, **kwargs):
-    """
-    Выполняет запрос с указанным количеством попыток (retries) и задержкой (delay) между ними.
-    Если ни одна попытка не удалась, выбрасывает исключение.
-    """
     for attempt in range(1, retries + 1):
         try:
             if method.lower() == "post":
@@ -497,6 +498,13 @@ async def request_with_retry(session, method, url, retries=3, delay=5, **kwargs)
             else:
                 raise ValueError("Unsupported method")
             return response
+        except (SSLError, CurlError) as e:
+            logger.warning(f"Попытка {attempt}/{retries} для {url} не удалась из-за SSL ошибки: {e}")
+            if attempt < retries:
+                await asyncio.sleep(delay)
+            else:
+                logger.error(f"Все {retries} попыток для {url} завершились неудачей из-за SSL ошибок.")
+                raise e
         except Exception as e:
             logger.warning(f"Попытка {attempt}/{retries} для {url} не удалась: {e}")
             if attempt < retries:
@@ -527,20 +535,23 @@ async def connect_twitter(account, proxy, twitter_data: tuple):
 
     browser_version, browser_platform = extract_browser_info(account.ua)
 
-    # Создаем сессию и клиента для работы с Twitter (ssl-проверка отключена для тестирования)
     session = BaseAsyncSession(proxy=proxy, user_agent=account.ua)
     client = TwitterClient(auth_token, session, version=browser_version, platform=browser_platform)
     client.username = username
 
-    # Проверяем валидность твиттер-токена
     login_success, login_message = await client.login()
     if not login_success:
         logger.error(f"{account.wallet_address} | Ошибка подключения Twitter: {login_message}")
-        write_failed_twitter(account.wallet_address, account.private_key, auth_token)
+
+        if login_message == "Плохой твиттер токен!":
+            logger.warning(f"{account.wallet_address} | Удаляем плохой токен: {auth_token}")
+            remove_twitter_token(auth_token)
+            write_failed_twitter(auth_token)
+        
         return False
+
     logger.success(f"{account.wallet_address} | Токен Twitter подтверждён: {login_message}")
 
-    # Получаем CSRF-токен через GET-запрос (ssl отключен для тестирования)
     async with aiohttp.ClientSession() as sess:
         csrf_headers = {
             'accept': '*/*',
@@ -563,17 +574,16 @@ async def connect_twitter(account, proxy, twitter_data: tuple):
                 csrf_token = csrf_response.get("csrfToken")
                 if not csrf_token:
                     logger.error(f"{account.wallet_address} | Не удалось получить csrf token")
-                    write_failed_twitter(account.wallet_address, account.private_key, auth_token)
+                    # write_failed_twitter(account.wallet_address, account.private_key, auth_token)
                     return False
             else:
                 error_text = await resp.text()
                 logger.error(f"{account.wallet_address} | Ошибка получения csrf token: {resp.status} - {error_text}")
-                write_failed_twitter(account.wallet_address, account.private_key, auth_token)
+                # write_failed_twitter(account.wallet_address, account.private_key, auth_token)
                 return False
 
         logger.debug(f"{account.wallet_address} | Получен csrf token: {csrf_token}")
 
-        # Формируем запрос для привязки Twitter с динамическим csrf token.
         callback_url = "https://dashboard.layeredge.io/tasks"
         payload = f"callbackUrl={quote(callback_url)}&csrfToken={csrf_token}&json=true"
         signin_headers = {
@@ -601,32 +611,30 @@ async def connect_twitter(account, proxy, twitter_data: tuple):
                 oauth_url = signin_json.get("url")
                 if not oauth_url:
                     logger.error(f"{account.wallet_address} | Не получена OAuth-ссылка: {signin_json}")
-                    write_failed_twitter(account.wallet_address, account.private_key, auth_token)
+                    # write_failed_twitter(account.wallet_address, account.private_key, auth_token)
                     return False
             else:
                 error_text = await signin_resp.text()
                 logger.error(f"{account.wallet_address} | Ошибка signin Twitter: {error_text}")
-                write_failed_twitter(account.wallet_address, account.private_key, auth_token)
+                # write_failed_twitter(account.wallet_address, account.private_key, auth_token)
                 return False
 
     logger.debug(f"{account.wallet_address} | Получена OAuth-ссылка: {oauth_url}")
 
-    # Извлекаем параметры из OAuth-ссылки
     parsed = urlparse(oauth_url)
     params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
-    # Выполняем OAuth-процесс: start_oauth2 и confirm_oauth2
     oauth_start_success, auth_code_or_msg = await client.start_oauth2(oauth_url, params)
     if not oauth_start_success:
         logger.error(f"{account.wallet_address} | Ошибка start_oauth2: {auth_code_or_msg}")
-        write_failed_twitter(account.wallet_address, account.private_key, auth_token)
+        # write_failed_twitter(account.wallet_address, account.private_key, auth_token)
         return False
     logger.debug(f"{account.wallet_address} | start_oauth2 выполнен, auth_code: {auth_code_or_msg}")
 
     oauth_confirm_success, redirect_uri_or_msg = await client.confirm_oauth2(oauth_url, auth_code_or_msg)
     if not oauth_confirm_success:
         logger.error(f"{account.wallet_address} | Ошибка confirm_oauth2: {redirect_uri_or_msg}")
-        write_failed_twitter(account.wallet_address, account.private_key, auth_token)
+        # write_failed_twitter(account.wallet_address, account.private_key, auth_token)
         return False
     logger.success(f"{account.wallet_address} | Привязка Twitter выполнена успешно, начинаю верификацию")
     logger.debug(f"{account.wallet_address} | Привязка Twitter выполнена успешно, redirect: {redirect_uri_or_msg}")
@@ -636,11 +644,10 @@ async def connect_twitter(account, proxy, twitter_data: tuple):
         logger.debug(f"{account.wallet_address} | Получен twitterId: {twitter_id}")
     except Exception as e:
         logger.error(f"{account.wallet_address} | Ошибка получения twitterId: {e}")
-        write_failed_twitter(account.wallet_address, account.private_key, auth_token)
+        # write_failed_twitter(account.wallet_address, account.private_key, auth_token)
         return False
 
     sign, timestamp = sign_connect_twitter(account)
-    # Формируем JSON payload для запроса фиксации привязки Twitter
     connect_payload = {
         "walletAddress": account.wallet_address,
         "sign": f"0x{sign}",
@@ -664,7 +671,6 @@ async def connect_twitter(account, proxy, twitter_data: tuple):
         'user-agent': account.ua,
     }
 
-    # Используем retry механизм для запроса фиксации Twitter
     try:
         connect_resp = await request_with_retry(
             session,
@@ -678,7 +684,7 @@ async def connect_twitter(account, proxy, twitter_data: tuple):
         )
     except Exception as e:
         logger.error(f"{account.wallet_address} | Ошибка запроса connect-twitter после нескольких попыток: {e}")
-        write_failed_twitter(account.wallet_address, account.private_key, auth_token)
+        # write_failed_twitter(account.wallet_address, account.private_key, auth_token)
         return False
 
     logger.debug(f"Отправляемый payload: {json.dumps(connect_payload, indent=4, ensure_ascii=False)}")
@@ -691,7 +697,7 @@ async def connect_twitter(account, proxy, twitter_data: tuple):
     else:
         error_text = connect_resp.text
         logger.error(f"{account.wallet_address} | Ошибка фиксации привязки Twitter: {connect_resp.status_code} - {error_text}")
-        write_failed_twitter(account.wallet_address, account.private_key, auth_token)
+        # write_failed_twitter(account.wallet_address, account.private_key, auth_token)
         return False
 
     return True
