@@ -19,7 +19,7 @@ MINUTES = 10
 # The time in seconds the account will wait before process, 60 * 60 = 1 hour
 
 MIN_DELAY_BEFORE_START = 0
-MAX_DELAY_BEFORE_START = 1000
+MAX_DELAY_BEFORE_START = 10000
 
 # ┏━━━━━━━━━━━━━━━━━━━━━━━━┓
 # ┃ SSL CERTIFICATE VERIFY ┃
@@ -33,7 +33,8 @@ SSL = True
 # ┗━━━━━━━━━━━━━━━━━━━━━━━━┛
 # Enable or disable tasks
 
-DO_PROOF = False                         # Send proof
+DO_PROOF = False                        # Send proof
+DO_TWITTER_CONNECT = True               # Complete the task with connect twitter  
 DO_SUBMIT_PROOF_TASK = False            # Complete the task with proof confirmation
 DO_LIGHT_NODE_RUN_TASK = False          # Complete the task with light node confirmation
 DO_PLEDGE_PASS_HOLD_TASK = False        # Complete the task with free pass
@@ -49,15 +50,9 @@ MINT_OG_PASS = False                    # Mint OG pledge pass for 0.0009 ETH
 MIN_DELAY_BETWEEN_ACCOUNTS = 100        # in seconds
 MAX_DELAY_BETWEEN_ACCOUNTS = 600        # in seconds
 
-# ┏━━━━━━━━━━━━━━━━━━━━━━━━┓
-# ┃    CONNECT TWITTER     ┃
-# ┗━━━━━━━━━━━━━━━━━━━━━━━━┛
-# Enable or disable tasks
-DO_TWITTER_CONNECT = True               # Complete the task with connect twitter  
-NUMBER_OF_ROUNDS = 10                   
-MAX_CONCURRENT_TASKS = 50
-
-LOG_LEVEL = "DEBUG"  # Можно поменять на INFO, WARNING, ERROR, DEBUG
+            
+LOG_LEVEL = "INFO"  # Можно поменять на INFO, WARNING, ERROR, DEBUG
 LOG_DIR = "logs"
 LOG_FILE = os.path.join(LOG_DIR, 'log.log')
-
+MAX_RETRIES = 3
+RETRY_DELAY = 5
