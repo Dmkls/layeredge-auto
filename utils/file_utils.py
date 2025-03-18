@@ -80,9 +80,9 @@ def write_success_twitter(address: str, private_key: str, auth_token: str):
     with open(SUCCESS_TWITTER_PATH, 'a', encoding="utf-8") as f:
         f.write(f'{address},{private_key},{auth_token}\n')
 
-def write_failed_twitter(address: str, private_key: str, auth_token: str):
+def write_failed_twitter(auth_token: str):
     with open(FAILED_TWITTER_PATH, 'a', encoding="utf-8") as f:
-        f.write(f'{address},{private_key},{auth_token}\n')
+        f.write(f'{auth_token}\n')
 
 def remove_wallet_to_complete_task(private_key: str):
     lines = read_file(WALLETS_TO_COMPLETE_TASKS_PATH)
